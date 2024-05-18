@@ -1,14 +1,25 @@
 /* sha256.c - SHA reference implementation using C            */
 /*   Written and placed in public domain by Jeffrey Walton    */
 
-/* xlc -DTEST_MAIN sha256.c -o sha256.exe           */
-/* gcc -DTEST_MAIN -std=c99 sha256.c -o sha256.exe  */
+
+// clang -march=native -mtune=native -o sha256 sha256.c
+// Size (-O0):  0x0431 @  953000 hashes/sec
+// Size (-O1):  0x02bf @ 2123000 hashes/sec
+// Size (-O2):  0x027c @ 2111000 hashes/sec
+// Size (-O3):  0x027c @ 3264000 hashes/sec 
+// Size (-Os):  0x0277 @ 2115000 hashes/sec
+// Size (-Oz):  0x0260 @ 2134000 haehes/sec
+
+
 
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <x86intrin.h>
+#include <stdlib.h>
+#include <time.h>
 
-static const uint32_t K256[] =
+static const uint32_t _Alignas(8) K256[] =
 {
     0x428A2F98, 0x71374491, 0xB5C0FBCF, 0xE9B5DBA5,
     0x3956C25B, 0x59F111F1, 0x923F82A4, 0xAB1C5ED5,
@@ -37,21 +48,37 @@ static const uint32_t K256[] =
 #define Ch(x,y,z)    (((x) & (y)) ^ ((~(x)) & (z)))
 #define Maj(x,y,z)   (((x) & (y)) ^ ((x) & (z)) ^ ((y) & (z)))
 
-/* Avoid undefined behavior                    */
-/* https://stackoverflow.com/q/29538935/608639 */
-uint32_t B2U32(uint8_t val, uint8_t sh)
-{
-    return ((uint32_t)val) << sh;
-}
+// Avoid undefined behavior                   
+// https://stackoverflow.com/q/29538935/608639
+// 
+// The function costs us 478 - 431 = 0x47 (71) bytes 
+//uint32_t B2U32(uint8_t val, uint8_t sh) {
+//    return ((uint32_t)val) << sh;
+//}
+
+#define B2U32( val, sh ) (((uint32_t)val) << sh)
+
 
 /* Process multiple blocks. The caller is responsible for setting the initial */
 /*  state, and the caller is responsible for padding the final block.        */
-void sha256_process(uint32_t state[8], const uint8_t data[], uint32_t length)
+void sha256_process( uint32_t state[8], const uint8_t data[], uint32_t length )
 {
-    uint32_t a, b, c, d, e, f, g, h, s0, s1, T1, T2;
-    uint32_t X[16], i;
+    uint32_t _Alignas(8) a;
+    uint32_t _Alignas(8) b;
+    uint32_t _Alignas(8) c;
+    uint32_t _Alignas(8) d;
+    uint32_t _Alignas(8) e;
+    uint32_t _Alignas(8) f;
+    uint32_t _Alignas(8) g;
+    uint32_t _Alignas(8) h;
+    uint32_t _Alignas(8) s0;
+    uint32_t _Alignas(8) s1;
+    uint32_t _Alignas(8) T2;
+    uint32_t _Alignas(8) T1;
+    uint32_t _Alignas(8) X[16];
+    uint32_t _Alignas(8) i;
 
-    size_t blocks = length / 64;
+    size_t _Alignas(8) blocks = length / 64;
     while (blocks--)
     {
         a = state[0];
@@ -118,18 +145,29 @@ void sha256_process(uint32_t state[8], const uint8_t data[], uint32_t length)
     }
 }
 
-#if defined(TEST_MAIN)
 
-#include <stdio.h>
-#include <string.h>
-int main(int argc, char* argv[])
-{
-    /* empty message with padding */
-    uint8_t message[64];
-    memset(message, 0x00, sizeof(message));
-    message[0] = 0x80;
+void genHash( char* str ) {
+   uint8_t _Alignas(8) message[64];
+   memset( message, 0x00, sizeof(message) );
 
-    /* initial state */
+   uint64_t _Alignas(8) length = strlen( str );
+   
+   if( length > 55 ) {
+      fprintf( stderr, "Unable to process messages > 55 characters long\n" );
+      exit( EXIT_FAILURE );
+   }
+
+   // The message can be up to 55 bytes long... 1 byte for a marker and the last 8 bytes are for padding/length
+   
+   strncpy( (char*)message, str, 55 );
+    
+   message[length] = 0x80;     // The padding marker
+   message[63] = length << 3;  // The valid number of bits in the message
+
+    // initial state
+    //
+    // Historical note:  It's the first 32 bits of the fractional parts of the
+    // square roots of the first 8 primes 2..19):
     uint32_t state[8] = {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
@@ -146,20 +184,81 @@ int main(int argc, char* argv[])
     const uint8_t b7 = (uint8_t)(state[1] >>  8);
     const uint8_t b8 = (uint8_t)(state[1] >>  0);
 
-    /* e3b0c44298fc1c14... */
-    printf("SHA256 hash of empty message: ");
-    printf("%02X%02X%02X%02X%02X%02X%02X%02X...\n",
-        b1, b2, b3, b4, b5, b6, b7, b8);
+    printf( "SHA256 hash of %s: ", str );
 
-    int success = ((b1 == 0xE3) && (b2 == 0xB0) && (b3 == 0xC4) && (b4 == 0x42) &&
-                    (b5 == 0x98) && (b6 == 0xFC) && (b7 == 0x1C) && (b8 == 0x14));
+    printf("%08x%08x%08x%08x%08x%08x%08x%08x\n",
+        state[0], state[1], state[2], state[3], state[4], state[5], state[6], state[7] );
 
-    if (success)
-        printf("Success!\n");
-    else
-        printf("Failure!\n");
-
-    return (success != 0 ? 0 : 1);
 }
 
-#endif
+
+/// Get a random number (`static inline`)
+///
+/// @return A 64-bit random number
+static inline uint64_t get_random64() {
+   uint64_t rval;
+
+   asm volatile (
+       "rdrand %0;"
+      :"=r" (rval)  // Output
+      :             // Input
+      :"cc"   );    // Clobbers
+
+   return rval;
+}
+
+
+void loadTest( const uint32_t iterations ) {
+   uint64_t _Alignas( 8 ) ticks = 0;
+   
+   union msg_u {
+      uint8_t each[64];
+      uint64_t u64[8];
+   };
+
+   union msg_u _Alignas( 8 ) message;
+   size_t _Alignas(8) length;
+   
+   for( int i = 0 ; i < iterations ; i++ ) {
+      message.u64[0] = get_random64();
+      message.u64[1] = get_random64();
+      message.u64[2] = get_random64();
+      message.u64[3] = get_random64();
+      message.u64[4] = get_random64();
+      message.u64[5] = get_random64();
+      message.u64[6] = get_random64();
+      message.u64[7] = get_random64();
+
+      uint32_t _Alignas( 8 ) state[8] = {
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
+        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
+      };
+
+//    uint64_t _Alignas( 8 ) startTime = __rdtsc();
+
+      sha256_process( state, &message.each[0], 64 );
+      
+//    uint64_t _Alignas( 8 ) endTime = __rdtsc();
+      
+//    ticks += (endTime - startTime);
+   }
+// printf( "Ticks %lu\n", ticks );
+}
+
+
+int main( int argc, char* argv[] ) {
+       
+   genHash( argv[1] );
+
+   clock_t stop_time = clock() + CLOCKS_PER_SEC;
+   uint32_t n = 0;
+   
+   while( clock() <= stop_time ) {   
+      loadTest( 1000 );
+      n += 1000;
+   }
+   printf( "%u SHA256 hashes per second\n", n );
+   
+       
+   return EXIT_SUCCESS;
+}
