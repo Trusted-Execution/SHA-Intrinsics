@@ -7,7 +7,7 @@
 // Size (-O0):  0x21d5 @ 2313000 hashes/sec
 // Size (-O1):  0x0355 @ 3717000 hashes/sec
 // Size (-O2):  0x0355 @ 3688000 hashes/sec
-// Size (-O3):  0x0355 @ 4600000 hashes/sec 
+// Size (-O3):  0x0355 @ 4600000 hashes/sec
 // Size (-Os):  0x0351 @ 3697000 hashes/sec
 // Size (-Oz):  0x034d @ 3694000 haehes/sec
 
@@ -22,7 +22,7 @@
 
 /* Process multiple blocks. The caller is responsible for setting the initial */
 /*  state, and the caller is responsible for padding the final block.        */
-void sha256_process_x86( uint32_t state[8], const uint8_t data[], uint32_t length ) {
+void sha256_process_x86( uint32_t state[8], const uint8_t* data, uint32_t length ) {
     __m128i _Alignas( 16 ) STATE0;
     __m128i _Alignas( 16 ) STATE1;
     __m128i _Alignas( 16 ) MSG;
@@ -34,6 +34,19 @@ void sha256_process_x86( uint32_t state[8], const uint8_t data[], uint32_t lengt
     __m128i _Alignas( 16 ) ABEF_SAVE;
     __m128i _Alignas( 16 ) CDGH_SAVE;
     const __m128i _Alignas( 16 ) MASK = _mm_set_epi64x(0x0c0d0e0f08090a0bULL, 0x0405060700010203ULL);
+
+    // Set initial state
+    //
+    // Historical note:  It's the first 32 bits of the fractional parts of the
+    // square roots of the first 8 primes 2..19):
+    state[0] = 0x6a09e667;
+    state[1] = 0xbb67ae85;
+    state[2] = 0x3c6ef372;
+    state[3] = 0xa54ff53a;
+    state[4] = 0x510e527f;
+    state[5] = 0x9b05688c;
+    state[6] = 0x1f83d9ab;
+    state[7] = 0x5be0cd19;
 
     // Load initial values
     TMP    = _mm_loadu_si128((const __m128i*) &state[0]);
@@ -225,38 +238,32 @@ void genHash( char* str ) {
    memset( message, 0x00, sizeof(message) );
 
    uint64_t _Alignas(8) length = strlen( str );
-   
+
    if( length > 55 ) {
       fprintf( stderr, "Unable to process messages > 55 characters long\n" );
       exit( EXIT_FAILURE );
    }
 
    // The message can be up to 55 bytes long... 1 byte for a marker and the last 8 bytes are for padding/length
-   
+
    strncpy( (char*)message, str, 55 );
-    
+
    message[length] = 0x80;     // The padding marker
    message[63] = length << 3;  // The valid number of bits in the message
 
-    // initial state
-    //
-    // Historical note:  It's the first 32 bits of the fractional parts of the
-    // square roots of the first 8 primes 2..19):
-    uint32_t state[8] = {
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-    };
+    uint32_t _Alignas( 8 ) state[8];
+
 
     sha256_process_x86(state, message, sizeof(message));
 
-    const uint8_t b1 = (uint8_t)(state[0] >> 24);
-    const uint8_t b2 = (uint8_t)(state[0] >> 16);
-    const uint8_t b3 = (uint8_t)(state[0] >>  8);
-    const uint8_t b4 = (uint8_t)(state[0] >>  0);
-    const uint8_t b5 = (uint8_t)(state[1] >> 24);
-    const uint8_t b6 = (uint8_t)(state[1] >> 16);
-    const uint8_t b7 = (uint8_t)(state[1] >>  8);
-    const uint8_t b8 = (uint8_t)(state[1] >>  0);
+    // const uint8_t b1 = (uint8_t)(state[0] >> 24);
+    // const uint8_t b2 = (uint8_t)(state[0] >> 16);
+    // const uint8_t b3 = (uint8_t)(state[0] >>  8);
+    // const uint8_t b4 = (uint8_t)(state[0] >>  0);
+    // const uint8_t b5 = (uint8_t)(state[1] >> 24);
+    // const uint8_t b6 = (uint8_t)(state[1] >> 16);
+    // const uint8_t b7 = (uint8_t)(state[1] >>  8);
+    // const uint8_t b8 = (uint8_t)(state[1] >>  0);
 
     printf( "SHA256 hash of %s: ", str );
 
@@ -284,7 +291,7 @@ static inline uint64_t get_random64() {
 
 void loadTest( const uint32_t iterations ) {
    uint64_t _Alignas( 8 ) ticks = 0;
-   
+
    union msg_u {
       uint8_t each[64];
       uint64_t u64[8];
@@ -292,7 +299,7 @@ void loadTest( const uint32_t iterations ) {
 
    union msg_u _Alignas( 8 ) message;
    size_t _Alignas(8) length;
-   
+
    for( int i = 0 ; i < iterations ; i++ ) {
       message.u64[0] = get_random64();
       message.u64[1] = get_random64();
@@ -303,17 +310,14 @@ void loadTest( const uint32_t iterations ) {
       message.u64[6] = get_random64();
       message.u64[7] = get_random64();
 
-      uint32_t _Alignas( 8 ) state[8] = {
-        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
-        0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
-      };
+      uint32_t _Alignas( 8 ) state[8];
 
 //    uint64_t _Alignas( 8 ) startTime = __rdtsc();
 
       sha256_process_x86( state, &message.each[0], 64 );
-      
+
 //    uint64_t _Alignas( 8 ) endTime = __rdtsc();
-      
+
 //    ticks += (endTime - startTime);
    }
 // printf( "Ticks %lu\n", ticks );
@@ -321,18 +325,18 @@ void loadTest( const uint32_t iterations ) {
 
 
 int main( int argc, char* argv[] ) {
-       
+
    genHash( argv[1] );
 
    clock_t stop_time = clock() + CLOCKS_PER_SEC;
    uint32_t n = 0;
-   
-   while( clock() <= stop_time ) {   
+
+   while( clock() <= stop_time ) {
       loadTest( 1000 );
       n += 1000;
    }
    printf( "%u SHA256 hashes per second\n", n );
-   
-       
+
+
    return EXIT_SUCCESS;
 }
